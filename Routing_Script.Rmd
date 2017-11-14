@@ -1,0 +1,144 @@
+
+
+Step 1: Move all data onto a single Excel tab. Add a column for church location and change column names to single-word variables. Don't forget to pay attention to bulk meal requests. Add a Unique_ID column at the front. Save results as a separate .csv document.
+
+Step 2: Import address data. 
+```{r}
+library(tidyr)
+library(dplyr)
+library(XLConnect)
+
+df <- tbl_df(read.csv("BranchesThanksgivingClientListMaster.csv", header = TRUE))
+
+locations <- unique(df$Church_Name)
+```
+
+Step 3: Separate data into locations, assign a route to each address
+```{r}
+location_count <- 1
+df_route_assign <- list()
+for (location in locations){
+  df_location <- df %>% 
+    filter(Church_Name == location) %>% 
+    arrange(Client_Zip) %>% 
+    mutate(Route = 0) %>% 
+    mutate(Order = row_number(Client_Zip))
+
+  items <- unique(df_location$Order)
+  
+  current_route <- 1
+  df_location$Route[1] <- current_route
+  
+  for (item in items[2:length(items)]) {
+    
+    # Calculate the number of meals and the stops on the current route
+    route_summary <- df_location %>% 
+                        filter(Route == current_route) %>% 
+                        summarize(Meals = sum(Client_Meals), Stops = n())
+    
+    if((df_location$Client_Zip[item] == df_location$Client_Zip[item - 1]) & # Zip codes match
+        (route_summary$Meals[1] + df_location$Client_Meals[item] <= 20) & # Meals can't exceed 20
+        (route_summary$Stops[1] + 1 <= 4)){ # Stops can't exceed 4
+            df_location$Route[item] <- current_route
+    }
+    else if ((route_summary$Meals[1] + df_location$Client_Meals[item] <= 20) &
+             (route_summary$Stops[1] <= 2)){
+            df_location$Route[item] <- current_route
+    }
+    else {
+            # Set up the new route
+            current_route <- current_route + 1
+            df_location$Route[item] <- current_route
+    } # End of else statement in if-else decision tree
+    
+  } # End of item for-loop
+  
+  # Save the data to inspect route assignments
+  df_route_assign[[location_count]] <- df_location
+  location_count <- location_count + 1
+  
+} # End of location for-loop
+```
+Make sure to inspect the routes before moving on to step 4
+
+Step 4: Create a spreadsheet for each loop
+```{r}
+for (loc in 1:length(locations)) {
+
+  df_loc <- df_route_assign[[loc]]
+  routes <- unique(df_loc$Route)
+  location <- locations[loc]
+  
+  for (route in routes) {
+      
+      final_route_summary <- df_loc %>% 
+                        filter(Route == route) %>% 
+                        summarize(Meals = sum(Client_Meals), Stops = n())
+      wb <- loadWorkbook("Route_Template.xlsx")
+
+      style.title  <- getCellStyle (wb , "my_header")
+      style.normal <- getCellStyle (wb , "my.table")
+
+      writeWorksheet(wb,route, sheet = 1 ,startRow = 2, startCol = 2, header = F)
+      writeWorksheet(wb,location, sheet = 1 ,startRow = 3, startCol = 2, header = F)
+      writeWorksheet(wb,final_route_summary$Meals[1], sheet = 1 ,startRow =2, startCol=9, header= F)
+      writeWorksheet(wb,final_route_summary$Stops[1], sheet = 1 ,startRow =3, startCol=9, header= F)
+
+      setCellStyle(wb, sheet=1, row= 2:3, col=1:9, cellstyle = style.title)
+
+      route_final <- df_loc %>%
+                      filter(Route == route) %>%
+                      mutate(New_Order = row_number(Order))
+      route_item <- unique(route_final$New_Order)
+
+      for (item in route_item) {
+        # Populate the worksheet
+        writeWorksheet(wb,route_final$Client_Name[item],
+                       sheet = 1 ,startRow = 5 + item, startCol = 1, header = F)
+        writeWorksheet(wb,route_final$Client_Address[item],
+                       sheet = 1 ,startRow = 5 + item, startCol = 2, header = F)
+        writeWorksheet(wb,route_final$Client_Apt[item],
+                       sheet = 1 ,startRow = 5 + item, startCol = 3, header = F)
+        writeWorksheet(wb,route_final$Client_City[item],
+                       sheet = 1 ,startRow = 5 + item, startCol = 4, header = F)
+        writeWorksheet(wb,route_final$Client_Zip[item],
+                       sheet = 1 ,startRow = 5 + item, startCol = 5, header = F)
+        writeWorksheet(wb,route_final$Client_Directions[item],
+                       sheet = 1 ,startRow = 5 + item, startCol = 6, header = F)
+        writeWorksheet(wb,route_final$Client_Num[item],
+                       sheet = 1 ,startRow = 5 + item, startCol = 7, header = F)
+        writeWorksheet(wb,route_final$Client_Language[item],
+                       sheet = 1 ,startRow = 5 + item, startCol = 8, header = F)
+        writeWorksheet(wb,route_final$Client_Meals[item],
+                       sheet = 1 ,startRow = 5 + item, startCol = 9, header = F)
+
+        # Set the cell style
+        setCellStyle(wb, sheet=1, row= 5 + item, col=1:9, cellstyle = style.normal)
+        setCellStyle(wb, sheet=1, row= 2, col=2, cellstyle = style.title)
+        setCellStyle(wb, sheet=1, row=3, col=9, cellstyle = style.title)
+      }
+      
+      saveWorkbook(wb, paste(location, " - ", route, ".xlsx", sep=""))
+      
+  } # End of route for-loop
+            
+} # End of location for-loop
+```
+
+Step 5: Validate the Excel outputs
+
+Step 6: Print out route summaries to create the routing workbook for each location
+```{r}
+for (loc in 1:length(locations)) {
+  
+  route_stats <- df_route_assign[[loc]] %>% 
+                  group_by(Route) %>% 
+                  summarise(Church_Name = first(Church_Name), Meals = sum(Client_Meals), Stops = n())
+  
+  
+  print(route_stats)
+
+}
+```
+
+
